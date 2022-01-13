@@ -616,7 +616,6 @@ version = "0.1.0"
 dependencies = [
  "aper",
  "serde",
- "simple-websockets",
 ]
 
 [[package]]
