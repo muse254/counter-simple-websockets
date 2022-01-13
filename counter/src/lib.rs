@@ -1,6 +1,8 @@
+use serde_json;
+use state::{Counter, CounterTransition};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
-use web_sys::{ErrorEvent, MessageEvent, WebSocket};
+use web_sys::{Document, Element, ErrorEvent, HtmlElement, MessageEvent, WebSocket};
 
 macro_rules! console_log {
     ($($t:tt)*) => (log(&format_args!($($t)*).to_string()))
@@ -13,75 +15,164 @@ extern "C" {
 }
 
 #[wasm_bindgen(start)]
-pub fn start_websocket() -> Result<(), JsValue> {
-    // Connect to an echo server
-    let ws = WebSocket::new("wss://echo.websocket.org")?;
-    // For small binary messages, like CBOR, Arraybuffer is more efficient than Blob handling
-    ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
-    // create callback
-    let cloned_ws = ws.clone();
+pub fn start() -> Result<(), JsValue> {
+    // Retrieve the window and the document.
+    let window = web_sys::window().expect("no global `window` exists");
+    let document = window.document().expect("should have a document on window");
+
+    // Connect to an the broadcast server.
+    let ws = WebSocket::new("ws://localhost:8080")?;
+
+    // Setup the websocket client with the associated callbacks to handle
+    // the connection lifecycle.
+    start_websocket(
+        document
+            .get_element_by_id("counter")
+            .expect("should have a #counter on the page"),
+        ws.clone(),
+    );
+
+    // Listen to onClick events for the Add, Substract and Reset buttons.
+    setup_adder(&document, ws.clone());
+    setup_subtractor(&document, ws.clone());
+    setup_reseter(&document, ws.clone());
+
+    Ok(())
+}
+
+fn start_websocket(element: Element, ws: WebSocket) {
+    // Setup callback to handle all incoming messages.
     let onmessage_callback = Closure::wrap(Box::new(move |e: MessageEvent| {
-        // Handle difference Text/Binary,...
-        if let Ok(abuf) = e.data().dyn_into::<js_sys::ArrayBuffer>() {
-            console_log!("message event, received arraybuffer: {:?}", abuf);
-            let array = js_sys::Uint8Array::new(&abuf);
-            let len = array.byte_length() as usize;
-            console_log!("Arraybuffer received {}bytes: {:?}", len, array.to_vec());
-            // here you can for example use Serde Deserialize decode the message
-            // for demo purposes we switch back to Blob-type and send off another binary message
-            cloned_ws.set_binary_type(web_sys::BinaryType::Blob);
-            match cloned_ws.send_with_u8_array(&vec![5, 6, 7, 8]) {
-                Ok(_) => console_log!("binary message successfully sent"),
-                Err(err) => console_log!("error sending message: {:?}", err),
+        if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
+            let txt_str: String = txt.clone().into();
+            match serde_json::from_str::<Counter>(txt_str.as_str()) {
+                Ok(counter) => {
+                    // Setup the new counter value as broadcasted.
+                    update_counter(&element, counter);
+                }
+                Err(_) => {}
             }
-        } else if let Ok(blob) = e.data().dyn_into::<web_sys::Blob>() {
-            console_log!("message event, received blob: {:?}", blob);
-            // better alternative to juggling with FileReader is to use https://crates.io/crates/gloo-file
-            let fr = web_sys::FileReader::new().unwrap();
-            let fr_c = fr.clone();
-            // create onLoadEnd callback
-            let onloadend_cb = Closure::wrap(Box::new(move |_e: web_sys::ProgressEvent| {
-                let array = js_sys::Uint8Array::new(&fr_c.result().unwrap());
-                let len = array.byte_length() as usize;
-                console_log!("Blob received {}bytes: {:?}", len, array.to_vec());
-                // here you can for example use the received image/png data
-            })
-                as Box<dyn FnMut(web_sys::ProgressEvent)>);
-            fr.set_onloadend(Some(onloadend_cb.as_ref().unchecked_ref()));
-            fr.read_as_array_buffer(&blob).expect("blob not readable");
-            onloadend_cb.forget();
-        } else if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
             console_log!("message event, received Text: {:?}", txt);
         } else {
             console_log!("message event, received Unknown: {:?}", e.data());
         }
     }) as Box<dyn FnMut(MessageEvent)>);
-    // set message event handler on WebSocket
+
+    // Set message event handler on WebSocket
     ws.set_onmessage(Some(onmessage_callback.as_ref().unchecked_ref()));
-    // forget the callback to keep it alive
+
+    // Forget the callback to keep it alive.
     onmessage_callback.forget();
 
     let onerror_callback = Closure::wrap(Box::new(move |e: ErrorEvent| {
         console_log!("error event: {:?}", e);
     }) as Box<dyn FnMut(ErrorEvent)>);
     ws.set_onerror(Some(onerror_callback.as_ref().unchecked_ref()));
+
+    // Forget the callback to keep it alive.
     onerror_callback.forget();
 
-    let cloned_ws = ws.clone();
+    // Set on connection callback.
     let onopen_callback = Closure::wrap(Box::new(move |_| {
+        // declare socket opened and wait for messages to be sent.
         console_log!("socket opened");
-        match cloned_ws.send_with_str("ping") {
-            Ok(_) => console_log!("message successfully sent"),
-            Err(err) => console_log!("error sending message: {:?}", err),
-        }
-        // send off binary message
-        match cloned_ws.send_with_u8_array(&vec![0, 1, 2, 3]) {
-            Ok(_) => console_log!("binary message successfully sent"),
-            Err(err) => console_log!("error sending message: {:?}", err),
-        }
     }) as Box<dyn FnMut(JsValue)>);
     ws.set_onopen(Some(onopen_callback.as_ref().unchecked_ref()));
-    onopen_callback.forget();
 
-    Ok(())
+    // Forget the callback to keep it alive.
+    onopen_callback.forget();
+}
+
+fn update_counter(counter_elem: &Element, state: state::Counter) {
+    counter_elem
+        .dyn_ref::<HtmlElement>()
+        .expect("#counter be an `HtmlElement`")
+        .set_text_content(Some(format!("Counter: {}", state.value()).as_str()));
+}
+
+fn setup_adder(document: &Document, ws: WebSocket) {
+    // Callback function to trigger a message for the CounterTransition.
+    let a = Closure::wrap(Box::new(move || {
+        // Create CounterTransition.
+        let add_transition = CounterTransition::Add(1);
+        let transition_data = serde_json::to_string(&add_transition).unwrap();
+
+        // Send the transition over the connection to the server.
+
+        match ws.send_with_str(transition_data.as_str()) {
+            Ok(_) => {
+                console_log!("transition sent successfully!")
+            }
+            Err(err) => {
+                console_log!("error sending transition: {:?}", err)
+            }
+        }
+    }) as Box<dyn Fn()>);
+
+    document
+        .get_element_by_id("adder")
+        .expect("should have an #adder on the page")
+        .dyn_ref::<HtmlElement>()
+        .expect("#adder be an `HtmlElement`")
+        .set_onclick(Some(a.as_ref().unchecked_ref()));
+
+    a.forget();
+}
+
+fn setup_subtractor(document: &Document, ws: WebSocket) {
+    // Callback function to trigger a message for the CounterTransition.
+    let a = Closure::wrap(Box::new(move || {
+        // Create CounterTransition.
+        let subtract_transition = CounterTransition::Subtract(1);
+        let transition_data = serde_json::to_string(&subtract_transition).unwrap();
+
+        // Send the transition over the connection to the server.
+
+        match ws.send_with_str(transition_data.as_str()) {
+            Ok(_) => {
+                console_log!("transition sent successfully!")
+            }
+            Err(err) => {
+                console_log!("error sending transition: {:?}", err)
+            }
+        }
+    }) as Box<dyn Fn()>);
+
+    document
+        .get_element_by_id("subtractor")
+        .expect("should have an #subtractor on the page")
+        .dyn_ref::<HtmlElement>()
+        .expect("#subtractor be an `HtmlElement`")
+        .set_onclick(Some(a.as_ref().unchecked_ref()));
+
+    a.forget();
+}
+
+fn setup_reseter(document: &Document, ws: WebSocket) {
+    // Callback function to trigger a message for the CounterTransition.
+    let a = Closure::wrap(Box::new(move || {
+        // Create CounterTransition.
+        let reset_transition = CounterTransition::Reset;
+        let transition_data = serde_json::to_string(&reset_transition).unwrap();
+
+        // Send the transition over the connection to the server.
+
+        match ws.send_with_str(transition_data.as_str()) {
+            Ok(_) => {
+                console_log!("transition sent successfully!")
+            }
+            Err(err) => {
+                console_log!("error sending transition: {:?}", err)
+            }
+        }
+    }) as Box<dyn Fn()>);
+
+    document
+        .get_element_by_id("reseter")
+        .expect("should have an #reseter on the page")
+        .dyn_ref::<HtmlElement>()
+        .expect("#reseter be an `HtmlElement`")
+        .set_onclick(Some(a.as_ref().unchecked_ref()));
+
+    a.forget();
 }

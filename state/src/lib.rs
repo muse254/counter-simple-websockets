@@ -14,6 +14,10 @@ pub enum CounterTransition {
 }
 
 impl Counter {
+    pub fn new() -> Counter {
+        Counter { value: 0 }
+    }
+
     pub fn value(&self) -> i64 {
         self.value
     }
