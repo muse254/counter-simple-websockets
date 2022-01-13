@@ -57,9 +57,6 @@ fn main() {
                             .send(Message::Text("Message format expected was text".to_owned()));
                     }
                 }
-
-                // echo the message back:
-                responder.send(message);
             }
         }
     }
