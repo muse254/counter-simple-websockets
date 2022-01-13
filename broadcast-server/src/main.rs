@@ -35,9 +35,6 @@ fn main() {
                 // declare client.
                 println!("Received a message from client #{}", client_id);
 
-                // retrieve this client's `Responder`:
-                let responder = clients.get(&client_id).unwrap();
-
                 // unmarshal request from the client.
                 match &message {
                     Message::Text(msg) => {
@@ -51,10 +48,6 @@ fn main() {
                     _ => {
                         // declare message format expected was text.
                         println!("Message format expected was text; Client #{}", client_id);
-
-                        // send error response
-                        responder
-                            .send(Message::Text("Message format expected was text".to_owned()));
                     }
                 }
             }
