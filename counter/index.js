@@ -1,5 +1,5 @@
-import init from './pkg/websockets.js';
+import init from './pkg/counter.js';
 
 window.addEventListener('load', async () => {
-    await init('./pkg/websockets_bg.wasm');
+    await init('./pkg/counter_bg.wasm');
 });
