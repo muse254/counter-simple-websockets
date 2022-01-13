@@ -1,0 +1,9 @@
+[package]
+name = "broadcast-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aper = "0.1.3"
+serde = "1.0.133"
+simple-websockets = "0.1.4"

@@ -1,0 +1,23 @@
+[package]
+name = "counter"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen = "0.2.78"
+js-sys = "0.3"
+
+[dependencies.web-sys]
+version = "0.3.22"
+features = [
+    "BinaryType",
+    "Blob",
+    "ErrorEvent",
+    "FileReader",
+    "MessageEvent",
+    "ProgressEvent",
+    "WebSocket",
+]
